@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
+import { YoutubeTranscript } from "youtube-transcript";
 import { setJob, updateJob } from "@/lib/jobStore";
 
 async function processJob(
@@ -49,29 +50,30 @@ async function fetchVideoInfo(videoId: string) {
 }
 
 async function fetchTranscript(videoId: string): Promise<string> {
-  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-    headers: { "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8", "User-Agent": "Mozilla/5.0" },
-  });
-  const html = await res.text();
-  const match = html.match(/"captionTracks":(\[.*?\])/);
-  if (!match) throw new Error("이 영상은 자막을 지원하지 않습니다.");
-
-  const tracks = JSON.parse(match[1]);
-  const preferred = tracks.find((t: { languageCode: string }) => t.languageCode === "ko")
-    || tracks.find((t: { languageCode: string }) => t.languageCode === "en")
-    || tracks[0];
-  if (!preferred?.baseUrl) throw new Error("사용 가능한 자막이 없습니다.");
-
-  const xmlRes = await fetch(preferred.baseUrl);
-  const xml = await xmlRes.text();
-  const lines = [...xml.matchAll(/<text start="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g)];
-  return lines.map((m) => {
-    const start = parseFloat(m[1]);
-    const mm = Math.floor(start / 60).toString().padStart(2, "0");
-    const ss = Math.floor(start % 60).toString().padStart(2, "0");
-    const text = m[2].replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/<[^>]+>/g, "");
-    return `[${mm}:${ss}] ${text}`;
-  }).join("\n");
+  // 한국어 → 영어 순으로 자막 시도
+  for (const lang of ["ko", "en"]) {
+    try {
+      const items = await YoutubeTranscript.fetchTranscript(videoId, { lang });
+      return items.map((item) => {
+        const mm = Math.floor(item.offset / 60000).toString().padStart(2, "0");
+        const ss = Math.floor((item.offset % 60000) / 1000).toString().padStart(2, "0");
+        return `[${mm}:${ss}] ${item.text}`;
+      }).join("\n");
+    } catch {
+      continue;
+    }
+  }
+  // 언어 지정 없이 재시도
+  try {
+    const items = await YoutubeTranscript.fetchTranscript(videoId);
+    return items.map((item) => {
+      const mm = Math.floor(item.offset / 60000).toString().padStart(2, "0");
+      const ss = Math.floor((item.offset % 60000) / 1000).toString().padStart(2, "0");
+      return `[${mm}:${ss}] ${item.text}`;
+    }).join("\n");
+  } catch {
+    throw new Error("이 영상은 자막을 지원하지 않습니다.");
+  }
 }
 
 async function refineWithGemini(title: string, transcript: string) {
