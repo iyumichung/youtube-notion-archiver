@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { getJobStatus } from "./api";
 
 export function subscribeToJob(
   jobId: string,
@@ -6,26 +6,25 @@ export function subscribeToJob(
   onDone: () => void,
   onError: (err: string) => void
 ): () => void {
-  const es = new EventSource(`${API_URL}/api/status/${jobId}`);
+  let stopped = false;
 
-  es.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      onUpdate(data);
-      if (data.status === "completed" || data.status === "failed") {
-        es.close();
-        onDone();
+  async function poll() {
+    while (!stopped) {
+      try {
+        const data = await getJobStatus(jobId);
+        onUpdate(data);
+        if (data.status === "completed" || data.status === "failed") {
+          onDone();
+          return;
+        }
+      } catch {
+        onError("상태 확인 중 오류가 발생했습니다.");
+        return;
       }
-    } catch {
-      onError("응답 파싱 오류");
-      es.close();
+      await new Promise((r) => setTimeout(r, 2000));
     }
-  };
+  }
 
-  es.onerror = () => {
-    onError("서버 연결이 끊겼습니다.");
-    es.close();
-  };
-
-  return () => es.close();
+  poll();
+  return () => { stopped = true; };
 }

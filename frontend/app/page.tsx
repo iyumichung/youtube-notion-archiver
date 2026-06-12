@@ -40,7 +40,7 @@ export default function Home() {
       subscribeToJob(
         job_id,
         (data) => {
-          const job = data as JobStatus & { result_url?: string };
+          const job = data as unknown as JobStatus & { result_url?: string };
           setCurrentJob({
             jobId: job_id,
             status: job.status as JobStatus["status"],
